@@ -286,6 +286,22 @@ def _aperture_u_shgc(aperture: dict, constr_index: dict, mat_index: dict):
     return u_ip, shgc
 
 
+def _resolve_constr_id(face, face_type, is_ground, room_cset_id, cset_index):
+    """Return the construction identifier for a face, falling back to cset."""
+    constr_id = (face.get("properties") or {}).get("energy", {}).get("construction")
+    if not constr_id and room_cset_id and cset_index:
+        cset = cset_index.get(room_cset_id, {})
+        if face_type == "Wall":
+            key = "ground_construction" if is_ground else "exterior_construction"
+            constr_id = (cset.get("wall_set") or {}).get(key)
+        elif face_type == "RoofCeiling":
+            constr_id = (cset.get("roof_ceiling_set") or {}).get("exterior_construction")
+        elif face_type == "Floor":
+            key = "ground_construction" if is_ground else "exterior_construction"
+            constr_id = (cset.get("floor_set") or {}).get(key)
+    return constr_id or ""
+
+
 def _opaque_assembly(
     face: dict,
     constr_index: dict,
@@ -349,7 +365,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
     cset_index = _build_cset_index(hbjson)
 
     walls = []
-    roofs = []
+    _roofs_by_constr = {}  # constr_id -> RoofData (areas summed)
     floors = []
     conditioned_area_m2 = 0.0
 
@@ -398,13 +414,19 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     face_type="RoofCeiling", is_ground=False,
                     room_cset_id=room_cset_id, cset_index=cset_index,
                 )
-                roofs.append(RoofData(
-                    gross_area_ft2=m2_to_ft2(area_m2),
-                    u_value=u_val,
-                    cavity_r=cavity_r,
-                    continuous_r=continuous_r,
-                    roof_type="WOOD_CATHEDRAL",
-                ))
+                constr_id = _resolve_constr_id(
+                    face, "RoofCeiling", False, room_cset_id, cset_index
+                ) or "default"
+                if constr_id in _roofs_by_constr:
+                    _roofs_by_constr[constr_id].gross_area_ft2 += m2_to_ft2(area_m2)
+                else:
+                    _roofs_by_constr[constr_id] = RoofData(
+                        gross_area_ft2=m2_to_ft2(area_m2),
+                        u_value=u_val,
+                        cavity_r=cavity_r,
+                        continuous_r=continuous_r,
+                        roof_type="WOOD_CATHEDRAL",
+                    )
 
             elif face_type == "Wall":
                 # Determine face normal from geometry
@@ -465,6 +487,8 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     ))
 
                 walls.append(wall)
+
+    roofs = list(_roofs_by_constr.values())
 
     return EnvelopeData(
         walls=walls,
