@@ -158,7 +158,7 @@ def _face_normal(vertices: list) -> list:
 def _vertices_from_face(face: dict) -> list:
     """Extract flat vertex list from a face geometry dict."""
     geom = face.get("geometry", {})
-    return geom.get("vertices", [])
+    return geom.get("boundary", geom.get("vertices", []))
 
 
 def _wall_heights(vertices: list):
@@ -228,9 +228,21 @@ def _build_materials_index(hbjson: dict) -> dict:
     return index
 
 
+def _build_cset_index(hbjson: dict) -> dict:
+    """Build identifier → construction_set dict from model-level construction sets."""
+    index = {}
+    props = hbjson.get("properties", {})
+    energy = props.get("energy", {})
+    for cset in energy.get("construction_sets", []):
+        ident = cset.get("identifier", "")
+        if ident:
+            index[ident] = cset
+    return index
+
+
 def _resolve_layers(construction: dict, mat_index: dict) -> list:
     """Return resolved layer dicts for a construction."""
-    layers_raw = construction.get("layers", [])
+    layers_raw = construction.get("materials") or construction.get("layers") or []
     if not layers_raw:
         return []
 
@@ -258,6 +270,11 @@ def _aperture_u_shgc(aperture: dict, constr_index: dict, mat_index: dict):
         # Window constructions have u_factor and shgc directly
         u_si = constr.get("u_factor") or constr.get("u_value") or 0.0
         shgc = constr.get("shgc", 0.0)
+        # PH window constructions store U and g_value in properties.ph.ph_glazing
+        if not u_si:
+            ph_glazing = constr.get("properties", {}).get("ph", {}).get("ph_glazing", {})
+            u_si = ph_glazing.get("u_factor", 0.0)
+            shgc = ph_glazing.get("g_value", 0.0) if not shgc else shgc
         # Convert U from SI (W/m²K) to IP (BTU/h·ft²·°F): multiply by 0.17611
         u_ip = u_si * 0.17611
         return u_ip, shgc
@@ -269,10 +286,39 @@ def _aperture_u_shgc(aperture: dict, constr_index: dict, mat_index: dict):
     return u_ip, shgc
 
 
-def _opaque_assembly(face: dict, constr_index: dict, mat_index: dict):
-    """Return (cavity_r, continuous_r, u_value) for an opaque face."""
+def _opaque_assembly(
+    face: dict,
+    constr_index: dict,
+    mat_index: dict,
+    face_type: str = "",
+    is_ground: bool = False,
+    room_cset_id: str = "",
+    cset_index: dict = None,
+):
+    """Return (cavity_r, continuous_r, u_value) for an opaque face.
+
+    Falls back to the room's construction_set when no direct construction is
+    set on the face.
+    """
     energy = face.get("properties", {}).get("energy", {})
     constr_id = energy.get("construction")
+
+    # Fall back to construction_set if no direct construction
+    if not constr_id and room_cset_id and cset_index:
+        cset = cset_index.get(room_cset_id, {})
+        if face_type == "Wall":
+            if is_ground:
+                constr_id = (cset.get("wall_set") or {}).get("ground_construction")
+            else:
+                constr_id = (cset.get("wall_set") or {}).get("exterior_construction")
+        elif face_type == "RoofCeiling":
+            constr_id = (cset.get("roof_ceiling_set") or {}).get("exterior_construction")
+        elif face_type == "Floor":
+            if is_ground:
+                constr_id = (cset.get("floor_set") or {}).get("ground_construction")
+            else:
+                constr_id = (cset.get("floor_set") or {}).get("exterior_construction")
+
     if constr_id and constr_id in constr_index:
         constr = constr_index[constr_id]
         layers = _resolve_layers(constr, mat_index)
@@ -300,6 +346,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
     front_bearing = float(_CARDINAL_BEARINGS.get(front_door_faces.upper(), 180))
     constr_index = _build_construction_index(hbjson)
     mat_index = _build_materials_index(hbjson)
+    cset_index = _build_cset_index(hbjson)
 
     walls = []
     roofs = []
@@ -309,17 +356,18 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
     rooms = hbjson.get("rooms", [])
 
     for room in rooms:
+        room_cset_id = room.get("properties", {}).get("energy", {}).get("construction_set", "")
         for face in room.get("faces", []):
             face_type = face.get("face_type", "")
             bc = face.get("boundary_condition", "")
 
             # Boundary condition can be a string like "Outdoors" / "Ground"
-            # or a dict like {"boundary_condition_objects": [...]} for adjacent faces
-            is_outdoors = bc == "Outdoors"
-            is_ground = bc == "Ground"
-            is_interior = isinstance(bc, dict) or (
-                isinstance(bc, str) and bc not in ("Outdoors", "Ground")
-            )
+            # or a dict like {"type": "Outdoors"} / {"type": "Ground"} /
+            # {"type": "Surface", "boundary_condition_objects": [...]} for adjacent faces
+            bc_type = bc if isinstance(bc, str) else bc.get("type", "") if isinstance(bc, dict) else ""
+            is_outdoors = bc_type == "Outdoors"
+            is_ground = bc_type == "Ground"
+            is_interior = bc_type not in ("Outdoors", "Ground") and bc_type != ""
 
             vertices = _vertices_from_face(face)
             area_m2 = _polygon_area_m2(vertices)
@@ -329,7 +377,11 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     conditioned_area_m2 += area_m2
 
                 if is_outdoors:
-                    cavity_r, continuous_r, _ = _opaque_assembly(face, constr_index, mat_index)
+                    cavity_r, continuous_r, _ = _opaque_assembly(
+                        face, constr_index, mat_index,
+                        face_type="Floor", is_ground=False,
+                        room_cset_id=room_cset_id, cset_index=cset_index,
+                    )
                     floors.append(FloorData(
                         gross_area_ft2=m2_to_ft2(area_m2),
                         cavity_r=cavity_r,
@@ -341,7 +393,11 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 # else interior floor — skip
 
             elif face_type == "RoofCeiling" and is_outdoors:
-                cavity_r, continuous_r, u_val = _opaque_assembly(face, constr_index, mat_index)
+                cavity_r, continuous_r, u_val = _opaque_assembly(
+                    face, constr_index, mat_index,
+                    face_type="RoofCeiling", is_ground=False,
+                    room_cset_id=room_cset_id, cset_index=cset_index,
+                )
                 roofs.append(RoofData(
                     gross_area_ft2=m2_to_ft2(area_m2),
                     u_value=u_val,
@@ -352,13 +408,16 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
 
             elif face_type == "Wall":
                 # Determine face normal from geometry
-                if vertices:
-                    normal = _face_normal(vertices)
-                else:
-                    normal = face.get("geometry", {}).get("normal", [0.0, 1.0, 0.0])
+                normal = (face.get("geometry") or {}).get("plane", {}).get("n") or (
+                    _face_normal(vertices) if vertices else [0.0, 1.0, 0.0]
+                )
 
                 orientation = _orientation_label(normal, front_bearing)
-                cavity_r, continuous_r, u_val = _opaque_assembly(face, constr_index, mat_index)
+                cavity_r, continuous_r, u_val = _opaque_assembly(
+                    face, constr_index, mat_index,
+                    face_type="Wall", is_ground=is_ground,
+                    room_cset_id=room_cset_id, cset_index=cset_index,
+                )
                 total_height_ft, below_grade_ft = _wall_heights(vertices)
 
                 is_below = is_ground
@@ -378,7 +437,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 for aperture in face.get("apertures", []):
                     ap_verts = _vertices_from_face(aperture)
                     if not ap_verts:
-                        ap_verts = aperture.get("geometry", {}).get("vertices", [])
+                        ap_verts = aperture.get("geometry", {}).get("boundary", [])
                     ap_area_m2 = _polygon_area_m2(ap_verts)
                     u_ip, shgc = _aperture_u_shgc(aperture, constr_index, mat_index)
                     ap_h_ft = 0.0
@@ -396,7 +455,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 for door in face.get("doors", []):
                     door_verts = _vertices_from_face(door)
                     if not door_verts:
-                        door_verts = door.get("geometry", {}).get("vertices", [])
+                        door_verts = door.get("geometry", {}).get("boundary", [])
                     door_area_m2 = _polygon_area_m2(door_verts)
                     u_ip, _ = _aperture_u_shgc(door, constr_index, mat_index)
                     wall.doors.append(DoorData(

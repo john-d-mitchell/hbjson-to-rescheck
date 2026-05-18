@@ -7,6 +7,18 @@ cavity R-value and continuous (ci) R-value in imperial units.
 # SI R-value (m²·K/W) → IP R-value (ft²·°F·h/BTU)
 _SI_TO_IP_R = 5.678
 
+
+def _layer_r_si(layer: dict) -> float:
+    """Return layer R-value in SI (m²·K/W)."""
+    r = layer.get("r_value")
+    if r is not None:
+        return float(r)
+    conductivity = layer.get("conductivity")
+    thickness = layer.get("thickness")
+    if conductivity and thickness and float(conductivity) > 0:
+        return float(thickness) / float(conductivity)
+    return 0.0
+
 # Keywords that identify cavity insulation layers (case-insensitive)
 _CAVITY_KEYWORDS = (
     "batt",
@@ -62,7 +74,7 @@ def classify_layers(layers: list) -> tuple:
 
     for layer in layers:
         identifier = layer.get("identifier", "")
-        r_si = layer.get("r_value", 0.0)
+        r_si = _layer_r_si(layer)
         r_ip = r_si * _SI_TO_IP_R
 
         if _is_cavity(identifier):
@@ -88,7 +100,7 @@ def assembly_u_value(layers: list) -> float:
     Returns:
         U-value in BTU/(ft²·°F·h).
     """
-    total_r_ip = sum(layer.get("r_value", 0.0) * _SI_TO_IP_R for layer in layers)
+    total_r_ip = sum(_layer_r_si(layer) * _SI_TO_IP_R for layer in layers)
     total_r_ip += _INTERIOR_AIR_FILM_IP + _EXTERIOR_AIR_FILM_IP
     if total_r_ip == 0.0:
         return 0.0
