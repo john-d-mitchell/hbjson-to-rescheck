@@ -51,8 +51,7 @@ _m = _get('_model')
 if hasattr(_m, 'Value'):
     _m = _m.Value
 if _m is not None:
-    from honeybee.model import Model
-    model = Model.from_dict(_m.to_dict())
+    model = type(_m).from_dict(_m.to_dict())
 
     if model.user_data is None:
         model.user_data = {}
