@@ -47,6 +47,9 @@ def _get(name, default=None):
 model = None
 
 _m = _get('_model')
+# Unwrap GH_ObjectWrapper if needed (GHPython sometimes wraps objects)
+if hasattr(_m, 'Value'):
+    _m = _m.Value
 if _m is not None:
     model = _m.duplicate()
 
