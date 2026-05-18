@@ -1,37 +1,34 @@
 """HB ResCheck Metadata
-Attach ResCheck project metadata to a Honeybee Model for export.
+Attaches ResCheck-specific metadata to a Honeybee-PH Model.
+Reads project/owner data from the existing HBPH project team (set via the
+'HBPH - Set Model Project Data' component upstream). Only the fields that
+are NOT available in the PH team data are collected here.
 -
-SETUP: Right-click this component and add the following inputs.
-Prefix required inputs with underscore. Optional inputs can use any name.
+Connect this component downstream of 'HBPH - Set Model Project Data'.
+-
+SETUP: Add the following input parameters to this component
+(right-click > Manage Attributes > Inputs):
 
-Required input parameters (add via right-click > Manage Attributes > Inputs):
-  _model            : Honeybee Model object (connect from your HB canvas)
-
-Optional input parameters:
-  _project_title    : str  - e.g. "My House"
-  _address          : str  - street address
-  _city             : str  - project city
-  _state            : str  - state abbreviation e.g. "NY"
-  _zip              : str  - ZIP code
-  _owner_name       : str  - owner or firm name
-  _location_state   : str  - full state name for ResCheck e.g. "New York"
-  _location_city    : str  - city + county e.g. "Woodstock (Ulster)"
-  _front_door_faces : str  - N, S, E, W, NE, NW, SE, SW (default: S)
-  _construction_type: str  - SINGLE_FAMILY (default)
-  _project_type     : str  - NEW_CONSTRUCTION (default)
-  _iecc_code        : str  - e.g. IECC2024 (default: IECC2021)
-  _compliance_mode  : str  - UA (default) or PRESCRIPTIVE
-  _duct_location    : str  - CONDITIONED_SPACE_ONLY (default)
-  _all_electric     : bool - True/False (default: False)
-  _has_heat_pump    : bool - True/False (default: False)
+  _model             : HB Model (connect from HBPH Set Model Project Data output)
+  _state             : str  - state abbreviation e.g. "NY" (not stored in PH team)
+  _location_state    : str  - full state name for ResCheck climate e.g. "New York"
+  _location_city     : str  - city + county for ResCheck climate e.g. "Woodstock (Ulster)"
+  _front_door_faces  : str  - cardinal direction front door faces: N S E W NE NW SE SW
+  _construction_type : str  - SINGLE_FAMILY (default)
+  _project_type      : str  - NEW_CONSTRUCTION (default) or ADDITION
+  _iecc_code         : str  - e.g. IECC2024 (default: IECC2021)
+  _compliance_mode   : str  - UA (default) or PRESCRIPTIVE
+  _duct_location     : str  - CONDITIONED_SPACE_ONLY (default)
+  _all_electric      : bool - default: False
+  _has_heat_pump     : bool - default: False
 
 Output parameter:
-  model             : Honeybee Model with ResCheck metadata in user_data
+  model              : HB Model with ResCheck metadata in user_data['rescheck']
 -
 Args:
-    _model: Honeybee Model object.
+    _model: HB Model from upstream HBPH Set Model Project Data component.
 Returns:
-    model: Model with ResCheck metadata attached to user_data['rescheck'].
+    model: Model with ResCheck metadata attached.
 """
 
 
@@ -47,9 +44,9 @@ def _get(name, default=None):
 model = None
 
 _m = _get('_model')
-# Unwrap GH_ObjectWrapper if needed (GHPython sometimes wraps objects)
 if hasattr(_m, 'Value'):
     _m = _m.Value
+
 if _m is not None:
     model = type(_m).from_dict(_m.to_dict())
 
@@ -57,21 +54,12 @@ if _m is not None:
         model.user_data = {}
 
     model.user_data['rescheck'] = {
-        'project': {
-            'title': _get('_project_title', ''),
-            'address': _get('_address', ''),
-            'city': _get('_city', ''),
-            'state': _get('_state', ''),
-            'zip': _get('_zip', ''),
-        },
-        'owner': {
-            'name': _get('_owner_name', ''),
-        },
         'location': {
             'state': _get('_location_state', ''),
             'city': _get('_location_city', ''),
         },
         'building': {
+            'state': _get('_state', ''),
             'front_door_faces': _get('_front_door_faces', 'S'),
             'construction_type': _get('_construction_type', 'SINGLE_FAMILY'),
             'project_type': _get('_project_type', 'NEW_CONSTRUCTION'),
