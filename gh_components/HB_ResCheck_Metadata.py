@@ -51,7 +51,7 @@ _m = _get('_model')
 if hasattr(_m, 'Value'):
     _m = _m.Value
 if _m is not None:
-    model = _m.duplicate()
+    model = _m
 
     if model.user_data is None:
         model.user_data = {}
