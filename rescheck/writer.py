@@ -19,72 +19,109 @@ def _glazing_type(u_value_ip: float) -> str:
 
 
 def _bool_str(value) -> str:
-    """Convert Python bool / truthy to lowercase XML boolean string."""
     return "true" if value else "false"
 
 
 def _cdata(text: str) -> str:
-    """Wrap text in a CDATA section."""
     return "<![CDATA[{}]]>".format(text.replace("]]>", "]]]]><![CDATA[>"))
 
 
 def _escape(text: str) -> str:
-    """HTML-escape text for use in XML element content."""
     return html.escape(str(text))
 
 
 def _window_xml(win, list_position: int) -> str:
     gt = _glazing_type(win.u_value)
     return (
-        "            <windows>\n"
-        "                <listPosition>{pos}</listPosition>\n"
-        "                <glazingType>{gt}</glazingType>\n"
-        "                <glazingArea>{area:.3f}</glazingArea>\n"
-        "                <glazingUValue>{u:.4f}</glazingUValue>\n"
-        "                <glazingSHGC>{shgc:.4f}</glazingSHGC>\n"
-        "                <windowHeight>{h:.3f}</windowHeight>\n"
-        "                <windowOrientation>{orient}</windowOrientation>\n"
-        "            </windows>\n"
+        "                <window>\n"
+        "                    <glazingType>{gt}</glazingType>\n"
+        "                    <glazingMaterialType>GLASS_GLAZING_MAT</glazingMaterialType>\n"
+        "                    <frameType>OTHER_FRAME</frameType>\n"
+        "                    <propShgc>{shgc:.2f}</propShgc>\n"
+        "                    <pfGlazingWidth>0.00</pfGlazingWidth>\n"
+        "                    <pfGlazingHeight>{h:.2f}</pfGlazingHeight>\n"
+        "                    <propProjectionFactor>0.00</propProjectionFactor>\n"
+        "                    <listPosition>{pos}</listPosition>\n"
+        "                    <description>{desc}</description>\n"
+        "                    <assemblyType>{atype}</assemblyType>\n"
+        "                    <propUvalue>{u:.3f}</propUvalue>\n"
+        "                    <relOrientation>{orient}</relOrientation>\n"
+        "                    <grossArea>{area:.2f}</grossArea>\n"
+        "                </window>\n"
     ).format(
-        pos=list_position,
         gt=gt,
-        area=win.area_ft2,
-        u=win.u_value,
         shgc=win.shgc,
         h=win.height_ft,
+        pos=list_position,
+        desc=_cdata("Other"),
+        atype=_cdata("Window 1"),
+        u=win.u_value,
         orient=win.orientation,
+        area=win.area_ft2,
     )
 
 
-def _door_xml(door) -> str:
+def _door_xml(door, list_position: int) -> str:
     return (
-        "            <doors>\n"
-        "                <doorArea>{area:.3f}</doorArea>\n"
-        "                <doorUValue>{u:.4f}</doorUValue>\n"
-        "                <doorOrientation>{orient}</doorOrientation>\n"
-        "            </doors>\n"
+        "                <door>\n"
+        "                    <doorType>OPAQUE_DOOR</doorType>\n"
+        "                    <listPosition>{pos}</listPosition>\n"
+        "                    <description>{desc}</description>\n"
+        "                    <assemblyType>{atype}</assemblyType>\n"
+        "                    <propUvalue>{u:.3f}</propUvalue>\n"
+        "                    <relOrientation>{orient}</relOrientation>\n"
+        "                    <grossArea>{area:.2f}</grossArea>\n"
+        "                </door>\n"
     ).format(
-        area=door.area_ft2,
+        pos=list_position,
+        desc=_cdata("Solid"),
+        atype=_cdata("Door 1"),
         u=door.u_value,
         orient=door.orientation,
+        area=door.area_ft2,
     )
+
+
+def _windows_block(windows) -> str:
+    if not windows:
+        return ""
+    lines = ["                <windows>\n"]
+    for i, win in enumerate(windows):
+        lines.append(_window_xml(win, i))
+    lines.append("                </windows>\n")
+    return "".join(lines)
+
+
+def _doors_block(doors) -> str:
+    if not doors:
+        return ""
+    lines = ["                <doors>\n"]
+    for i, door in enumerate(doors):
+        lines.append(_door_xml(door, i))
+    lines.append("                </doors>\n")
+    return "".join(lines)
 
 
 def _above_grade_wall_xml(wall, list_pos: int) -> str:
     lines = [
         "        <aboveGroundWalls>\n",
-        "            <listPosition>{}</listPosition>\n".format(list_pos),
-        "            <wallOrientation>{}</wallOrientation>\n".format(wall.orientation),
-        "            <wallHeight>{:.3f}</wallHeight>\n".format(wall.wall_height_ft),
-        "            <wallGrossArea>{:.3f}</wallGrossArea>\n".format(wall.gross_area_ft2),
-        "            <wallCavityR>{:.2f}</wallCavityR>\n".format(wall.cavity_r),
-        "            <wallContinuousR>{:.2f}</wallContinuousR>\n".format(wall.continuous_r),
-        "            <wallUValue>{:.4f}</wallUValue>\n".format(wall.u_value),
+        "            <agWall>\n",
+        "                <wallType>OTHER_AG_WALL</wallType>\n",
+        "                <otherWallType>AG_WALL_OTHER_OTHER</otherWallType>\n",
+        "                <listPosition>{}</listPosition>\n".format(list_pos),
+        "                <description>{}</description>\n".format(_cdata("Framed wall")),
+        "                <assemblyType>{}</assemblyType>\n".format(
+            _cdata("Wall {}".format(list_pos))
+        ),
+        "                <propUvalue>{:.3f}</propUvalue>\n".format(wall.u_value),
+        "                <cavityRvalue>{:.2f}</cavityRvalue>\n".format(wall.cavity_r),
+        "                <continuousRvalue>{:.2f}</continuousRvalue>\n".format(wall.continuous_r),
+        "                <relOrientation>{}</relOrientation>\n".format(wall.orientation),
+        "                <grossArea>{:.2f}</grossArea>\n".format(wall.gross_area_ft2),
     ]
-    for i, win in enumerate(wall.windows):
-        lines.append(_window_xml(win, 0))
-    for door in wall.doors:
-        lines.append(_door_xml(door))
+    lines.append(_windows_block(wall.windows))
+    lines.append(_doors_block(wall.doors))
+    lines.append("            </agWall>\n")
     lines.append("        </aboveGroundWalls>\n")
     return "".join(lines)
 
@@ -92,21 +129,29 @@ def _above_grade_wall_xml(wall, list_pos: int) -> str:
 def _below_grade_wall_xml(wall, list_pos: int) -> str:
     lines = [
         "        <belowGroundWalls>\n",
-        "            <listPosition>{}</listPosition>\n".format(list_pos),
-        "            <wallOrientation>{}</wallOrientation>\n".format(wall.orientation),
-        "            <wallGrossArea>{:.3f}</wallGrossArea>\n".format(wall.gross_area_ft2),
-        "            <wallHeight>{:.3f}</wallHeight>\n".format(wall.wall_height_ft),
-        "            <wallBelowGradeHeight>{:.3f}</wallBelowGradeHeight>\n".format(
+        "            <bgWall>\n",
+        "                <insulationPosition>INTEGRAL</insulationPosition>\n",
+        "                <wallType>WOOD_BG_WALL</wallType>\n",
+        "                <wallHeight>{:.2f}</wallHeight>\n".format(wall.wall_height_ft),
+        "                <wallHeightBelowGrade>{:.2f}</wallHeightBelowGrade>\n".format(
             wall.below_grade_height_ft
         ),
-        "            <wallCavityR>{:.2f}</wallCavityR>\n".format(wall.cavity_r),
-        "            <wallContinuousR>{:.2f}</wallContinuousR>\n".format(wall.continuous_r),
-        "            <wallUValue>{:.4f}</wallUValue>\n".format(wall.u_value),
+        "                <depthOfInsulation>{:.2f}</depthOfInsulation>\n".format(
+            wall.wall_height_ft
+        ),
+        "                <listPosition>{}</listPosition>\n".format(list_pos),
+        "                <description>{}</description>\n".format(_cdata("Wood Frame")),
+        "                <assemblyType>{}</assemblyType>\n".format(
+            _cdata("Basement Wall {}".format(list_pos))
+        ),
+        "                <cavityRvalue>{:.2f}</cavityRvalue>\n".format(wall.cavity_r),
+        "                <continuousRvalue>{:.2f}</continuousRvalue>\n".format(wall.continuous_r),
+        "                <relOrientation>{}</relOrientation>\n".format(wall.orientation),
+        "                <grossArea>{:.2f}</grossArea>\n".format(wall.gross_area_ft2),
     ]
-    for win in wall.windows:
-        lines.append(_window_xml(win, 0))
-    for door in wall.doors:
-        lines.append(_door_xml(door))
+    lines.append(_windows_block(wall.windows))
+    lines.append(_doors_block(wall.doors))
+    lines.append("            </bgWall>\n")
     lines.append("        </belowGroundWalls>\n")
     return "".join(lines)
 
@@ -114,36 +159,51 @@ def _below_grade_wall_xml(wall, list_pos: int) -> str:
 def _roof_xml(roof, list_pos: int) -> str:
     return (
         "        <roofs>\n"
-        "            <listPosition>{pos}</listPosition>\n"
-        "            <roofType>{rt}</roofType>\n"
-        "            <roofGrossArea>{area:.3f}</roofGrossArea>\n"
-        "            <roofCavityR>{cr:.2f}</roofCavityR>\n"
-        "            <roofContinuousR>{ccr:.2f}</roofContinuousR>\n"
-        "            <roofUValue>{u:.4f}</roofUValue>\n"
+        "            <roof>\n"
+        "                <roofType>{rt}</roofType>\n"
+        "                <roofInsulType>ROOF_INSUL_TYPE_UNSPECIFIED</roofInsulType>\n"
+        "                <listPosition>{pos}</listPosition>\n"
+        "                <description>{desc}</description>\n"
+        "                <assemblyType>{atype}</assemblyType>\n"
+        "                <cavityRvalue>{cr:.2f}</cavityRvalue>\n"
+        "                <continuousRvalue>{ccr:.2f}</continuousRvalue>\n"
+        "                <propUvalue>{u:.3f}</propUvalue>\n"
+        "                <grossArea>{area:.2f}</grossArea>\n"
+        "            </roof>\n"
         "        </roofs>\n"
     ).format(
-        pos=list_pos,
         rt=roof.roof_type,
-        area=roof.gross_area_ft2,
+        pos=list_pos,
+        desc=_cdata("Cathedral Ceiling (no attic)"),
+        atype=_cdata("Ceiling {}".format(list_pos)),
         cr=roof.cavity_r,
         ccr=roof.continuous_r,
         u=roof.u_value,
+        area=roof.gross_area_ft2,
     )
 
 
 def _floor_xml(floor, list_pos: int) -> str:
     return (
         "        <floors>\n"
-        "            <listPosition>{pos}</listPosition>\n"
-        "            <floorType>{ft}</floorType>\n"
-        "            <floorGrossArea>{area:.3f}</floorGrossArea>\n"
-        "            <floorCavityR>{cr:.2f}</floorCavityR>\n"
+        "            <floor>\n"
+        "                <floorType>{ft}</floorType>\n"
+        "                <depthOfInsulation>2.00</depthOfInsulation>\n"
+        "                <insulationPosition>NO_INSULATION</insulationPosition>\n"
+        "                <listPosition>{pos}</listPosition>\n"
+        "                <description>{desc}</description>\n"
+        "                <assemblyType>{atype}</assemblyType>\n"
+        "                <cavityRvalue>{cr:.2f}</cavityRvalue>\n"
+        "                <grossArea>{area:.2f}</grossArea>\n"
+        "            </floor>\n"
         "        </floors>\n"
     ).format(
-        pos=list_pos,
         ft=floor.floor_type,
-        area=floor.gross_area_ft2,
+        pos=list_pos,
+        desc=_cdata("All-Wood Joist/Truss:Over Outside Air"),
+        atype=_cdata("Floor {}".format(list_pos)),
         cr=floor.cavity_r,
+        area=floor.gross_area_ft2,
     )
 
 
@@ -176,11 +236,17 @@ def write_rxl(envelope, metadata: dict, infiltration_ach: float) -> str:
     city = project.get("city", "")
     state = project.get("state", "")
     zip_code = project.get("zip", "")
+
     owner_name = owner.get("name", "")
+    owner_address = owner.get("address", "")
+    owner_city = owner.get("city", "")
+    owner_state = owner.get("state", state)
+    owner_zip = owner.get("zip", zip_code)
+
     loc_state = location.get("state", "")
     loc_city = location.get("city", "")
 
-    # Build envelope XML fragment
+    # Build envelope XML
     envelope_lines = [
         "    <envelope>\n",
         "        <useOrientDetails>true</useOrientDetails>\n",
@@ -235,9 +301,15 @@ def write_rxl(envelope, metadata: dict, infiltration_ach: float) -> str:
         "        <projectTitle>{title_cdata}</projectTitle>\n"
         "        <projectAddress>{addr_cdata}</projectAddress>\n"
         "        <projectCity>{city_cdata}</projectCity>\n"
-        "        <projectState>{state_esc}</projectState>\n"
-        "        <projectZip>{zip_esc}</projectZip>\n"
-        "        <ownerName>{owner_cdata}</ownerName>\n"
+        "        <projectState>{state_cdata}</projectState>\n"
+        "        <projectZipCode>{zip_cdata}</projectZipCode>\n"
+        "        <ownerFirstName>{owner_fn_cdata}</ownerFirstName>\n"
+        "        <ownerLastName>{owner_ln_cdata}</ownerLastName>\n"
+        "        <ownerAddress>{owner_addr_cdata}</ownerAddress>\n"
+        "        <ownerCity>{owner_city_cdata}</ownerCity>\n"
+        "        <ownerState>{owner_state_cdata}</ownerState>\n"
+        "        <ownerZipCode>{owner_zip_cdata}</ownerZipCode>\n"
+        "        <projectComplete>false</projectComplete>\n"
         "    </project>\n"
         "{envelope_section}"
         "    <infiltration>\n"
@@ -260,9 +332,14 @@ def write_rxl(envelope, metadata: dict, infiltration_ach: float) -> str:
         title_cdata=_cdata(title),
         addr_cdata=_cdata(address),
         city_cdata=_cdata(city),
-        state_esc=_escape(state),
-        zip_esc=_escape(zip_code),
-        owner_cdata=_cdata(owner_name),
+        state_cdata=_cdata(state),
+        zip_cdata=_cdata(zip_code),
+        owner_fn_cdata=_cdata(owner_name),
+        owner_ln_cdata=_cdata(""),
+        owner_addr_cdata=_cdata(owner_address),
+        owner_city_cdata=_cdata(owner_city),
+        owner_state_cdata=_cdata(owner_state),
+        owner_zip_cdata=_cdata(owner_zip),
         envelope_section=envelope_section,
         ach=infiltration_ach,
         iecc_code=_escape(iecc_code),

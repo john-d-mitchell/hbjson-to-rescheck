@@ -30,6 +30,7 @@ _CAVITY_KEYWORDS = (
     "spray",
     "ocspf",
     "blown",
+    "hybrid",      # HBPH HybridEnergyMaterial: effective stud-bay + insulation assembly
 )
 
 # Keywords that identify continuous (ci) insulation layers (case-insensitive)
@@ -42,6 +43,7 @@ _CONTINUOUS_KEYWORDS = (
     "foam_board",
     "continuous",
     "ci",
+    "comforboard",  # Roxul Comforboard: rigid mineral-wool board
 )
 
 # Standard ASHRAE air film resistances (IP units, ft²·°F·h/BTU)

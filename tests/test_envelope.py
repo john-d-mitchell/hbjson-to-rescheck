@@ -304,3 +304,71 @@ def test_extract_envelope_front_door_north():
     env = extract_envelope(_SHOEBOX_HBJSON, "N")
     north_walls = [w for w in env.walls if w.orientation == "FRONT"]
     assert len(north_walls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Consolidation tests
+# ---------------------------------------------------------------------------
+
+def test_wall_consolidation_same_assembly_orientation():
+    # Two south-facing walls with the same construction → merged into one entry.
+    wall_a = _make_face("Wall", "Outdoors", _SOUTH_WALL_VERTS, [0, -1, 0], "WallConstruction")
+    wall_b = _make_face("Wall", "Outdoors",
+                        [[0, 0, 0], [5, 0, 0], [5, 0, 3], [0, 0, 3]],  # 5m × 3m
+                        [0, -1, 0], "WallConstruction")
+    hbjson = {
+        "rooms": [{"faces": [wall_a, wall_b]}],
+        "properties": {"energy": {"constructions": [_WALL_CONSTRUCTION], "materials": []}},
+    }
+    env = extract_envelope(hbjson, "S")
+    assert len(env.walls) == 1
+    # Combined area: (10*3 + 5*3) m² = 45 m²
+    assert env.walls[0].gross_area_ft2 == pytest.approx(45.0 * 10.7639, rel=1e-3)
+
+
+def test_wall_consolidation_different_orientations_not_merged():
+    # South and north walls with the same construction → two separate entries.
+    south = _make_face("Wall", "Outdoors", _SOUTH_WALL_VERTS, [0, -1, 0], "WallConstruction")
+    north = _make_face("Wall", "Outdoors", _NORTH_WALL_VERTS, [0, 1, 0], "WallConstruction")
+    hbjson = {
+        "rooms": [{"faces": [south, north]}],
+        "properties": {"energy": {"constructions": [_WALL_CONSTRUCTION], "materials": []}},
+    }
+    env = extract_envelope(hbjson, "S")
+    assert len(env.walls) == 2
+
+
+def test_wall_consolidation_windows_accumulated():
+    # Two south walls each with a window → consolidated wall has both windows.
+    win1 = _make_aperture([[1, 0, 0.5], [2, 0, 0.5], [2, 0, 1.5], [1, 0, 1.5]], "WindowConstruction")
+    win2 = _make_aperture([[3, 0, 0.5], [4, 0, 0.5], [4, 0, 1.5], [3, 0, 1.5]], "WindowConstruction")
+    wall_a = _make_face("Wall", "Outdoors", _SOUTH_WALL_VERTS, [0, -1, 0],
+                        "WallConstruction", apertures=[win1])
+    wall_b = _make_face("Wall", "Outdoors",
+                        [[0, 0, 0], [5, 0, 0], [5, 0, 3], [0, 0, 3]],
+                        [0, -1, 0], "WallConstruction", apertures=[win2])
+    hbjson = {
+        "rooms": [{"faces": [wall_a, wall_b]}],
+        "properties": {"energy": {
+            "constructions": [_WALL_CONSTRUCTION, _WINDOW_CONSTRUCTION],
+            "materials": [],
+        }},
+    }
+    env = extract_envelope(hbjson, "S")
+    assert len(env.walls) == 1
+    assert len(env.walls[0].windows) == 2
+
+
+def test_floor_consolidation_same_assembly():
+    floor_a = _make_face("Floor", "Outdoors",
+                         [[0, 0, 5], [5, 0, 5], [5, 5, 5], [0, 5, 5]], [0, 0, -1])
+    floor_b = _make_face("Floor", "Outdoors",
+                         [[5, 0, 5], [10, 0, 5], [10, 5, 5], [5, 5, 5]], [0, 0, -1])
+    hbjson = {
+        "rooms": [{"faces": [floor_a, floor_b]}],
+        "properties": {"energy": {"constructions": [], "materials": []}},
+    }
+    env = extract_envelope(hbjson, "S")
+    assert len(env.floors) == 1
+    # Combined area: 25 + 25 = 50 m²
+    assert env.floors[0].gross_area_ft2 == pytest.approx(50.0 * 10.7639, rel=1e-3)

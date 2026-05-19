@@ -19,8 +19,8 @@ SETUP: Add the following input parameters to this component
   _iecc_code         : str  - e.g. IECC2024 (default: IECC2021)
   _compliance_mode   : str  - UA (default) or PRESCRIPTIVE
   _duct_location     : str  - CONDITIONED_SPACE_ONLY (default)
-  _all_electric      : bool - default: False
-  _has_heat_pump     : bool - default: False
+  _all_electric      : bool - default: True
+  _has_heat_pump     : bool - default: True
 
 Output parameter:
   model              : HB Model with ResCheck metadata in user_data['rescheck']

@@ -364,9 +364,9 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
     mat_index = _build_materials_index(hbjson)
     cset_index = _build_cset_index(hbjson)
 
-    walls = []
+    _walls_by_key = {}   # (constr_id, orientation, is_below_grade) -> WallData
     _roofs_by_constr = {}  # constr_id -> RoofData (areas summed)
-    floors = []
+    _floors_by_key = {}  # (constr_id, floor_type) -> FloorData
     conditioned_area_m2 = 0.0
 
     rooms = hbjson.get("rooms", [])
@@ -389,8 +389,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
             area_m2 = _polygon_area_m2(vertices)
 
             if face_type == "Floor":
-                if not is_interior:
-                    conditioned_area_m2 += area_m2
+                conditioned_area_m2 += area_m2
 
                 if is_outdoors:
                     cavity_r, continuous_r, _ = _opaque_assembly(
@@ -398,11 +397,19 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                         face_type="Floor", is_ground=False,
                         room_cset_id=room_cset_id, cset_index=cset_index,
                     )
-                    floors.append(FloorData(
-                        gross_area_ft2=m2_to_ft2(area_m2),
-                        cavity_r=cavity_r,
-                        floor_type="ALL_WOOD_JOIST_TRUSS_FLOOR",
-                    ))
+                    floor_type = "ALL_WOOD_JOIST_TRUSS_FLOOR"
+                    constr_id = _resolve_constr_id(
+                        face, "Floor", False, room_cset_id, cset_index
+                    ) or "default"
+                    floor_key = (constr_id, floor_type)
+                    if floor_key in _floors_by_key:
+                        _floors_by_key[floor_key].gross_area_ft2 += m2_to_ft2(area_m2)
+                    else:
+                        _floors_by_key[floor_key] = FloorData(
+                            gross_area_ft2=m2_to_ft2(area_m2),
+                            cavity_r=cavity_r,
+                            floor_type=floor_type,
+                        )
                 elif is_ground:
                     # Slab — out of scope per spec; skip
                     pass
@@ -435,6 +442,9 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 )
 
                 orientation = _orientation_label(normal, front_bearing)
+                constr_id = _resolve_constr_id(
+                    face, "Wall", is_ground, room_cset_id, cset_index
+                ) or "default"
                 cavity_r, continuous_r, u_val = _opaque_assembly(
                     face, constr_index, mat_index,
                     face_type="Wall", is_ground=is_ground,
@@ -442,20 +452,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 )
                 total_height_ft, below_grade_ft = _wall_heights(vertices)
 
-                is_below = is_ground
-
-                wall = WallData(
-                    gross_area_ft2=m2_to_ft2(area_m2),
-                    u_value=u_val,
-                    cavity_r=cavity_r,
-                    continuous_r=continuous_r,
-                    orientation=orientation,
-                    is_below_grade=is_below,
-                    wall_height_ft=total_height_ft,
-                    below_grade_height_ft=below_grade_ft,
-                )
-
-                # Sub-faces: apertures (windows) and doors
+                windows = []
                 for aperture in face.get("apertures", []):
                     ap_verts = _vertices_from_face(aperture)
                     if not ap_verts:
@@ -466,7 +463,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     if ap_verts:
                         z_vals = [v[2] for v in ap_verts]
                         ap_h_ft = m_to_ft(max(z_vals) - min(z_vals))
-                    wall.windows.append(WindowData(
+                    windows.append(WindowData(
                         area_ft2=m2_to_ft2(ap_area_m2),
                         u_value=u_ip,
                         shgc=shgc,
@@ -474,25 +471,46 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                         height_ft=ap_h_ft,
                     ))
 
+                doors = []
                 for door in face.get("doors", []):
                     door_verts = _vertices_from_face(door)
                     if not door_verts:
                         door_verts = door.get("geometry", {}).get("boundary", [])
                     door_area_m2 = _polygon_area_m2(door_verts)
                     u_ip, _ = _aperture_u_shgc(door, constr_index, mat_index)
-                    wall.doors.append(DoorData(
+                    doors.append(DoorData(
                         area_ft2=m2_to_ft2(door_area_m2),
                         u_value=u_ip,
                         orientation=orientation,
                     ))
 
-                walls.append(wall)
-
-    roofs = list(_roofs_by_constr.values())
+                wall_key = (constr_id, orientation, is_ground)
+                if wall_key in _walls_by_key:
+                    existing = _walls_by_key[wall_key]
+                    existing.gross_area_ft2 += m2_to_ft2(area_m2)
+                    existing.wall_height_ft = max(existing.wall_height_ft, total_height_ft)
+                    existing.below_grade_height_ft = max(
+                        existing.below_grade_height_ft, below_grade_ft
+                    )
+                    existing.windows.extend(windows)
+                    existing.doors.extend(doors)
+                else:
+                    _walls_by_key[wall_key] = WallData(
+                        gross_area_ft2=m2_to_ft2(area_m2),
+                        u_value=u_val,
+                        cavity_r=cavity_r,
+                        continuous_r=continuous_r,
+                        orientation=orientation,
+                        is_below_grade=is_ground,
+                        wall_height_ft=total_height_ft,
+                        below_grade_height_ft=below_grade_ft,
+                        windows=windows,
+                        doors=doors,
+                    )
 
     return EnvelopeData(
-        walls=walls,
-        roofs=roofs,
-        floors=floors,
+        walls=list(_walls_by_key.values()),
+        roofs=list(_roofs_by_constr.values()),
+        floors=list(_floors_by_key.values()),
         conditioned_floor_area_ft2=m2_to_ft2(conditioned_area_m2),
     )

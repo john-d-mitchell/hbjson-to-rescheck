@@ -219,10 +219,12 @@ def test_write_rxl_above_ground_wall():
     result = write_rxl(env, _METADATA, 0.5)
     root = ET.fromstring(result)
     envelope_el = root.find(_tag("envelope"))
-    wall_el = envelope_el.find(_tag("aboveGroundWalls"))
-    assert wall_el is not None
-    assert wall_el.find(_tag("wallOrientation")).text == "FRONT"
-    assert float(wall_el.find(_tag("wallGrossArea")).text) == pytest.approx(322.92, rel=1e-3)
+    walls_el = envelope_el.find(_tag("aboveGroundWalls"))
+    assert walls_el is not None
+    ag_el = walls_el.find(_tag("agWall"))
+    assert ag_el is not None
+    assert ag_el.find(_tag("relOrientation")).text == "FRONT"
+    assert float(ag_el.find(_tag("grossArea")).text) == pytest.approx(322.92, rel=1e-3)
 
 
 def test_write_rxl_window_in_wall():
@@ -230,11 +232,13 @@ def test_write_rxl_window_in_wall():
     result = write_rxl(env, _METADATA, 0.5)
     root = ET.fromstring(result)
     envelope_el = root.find(_tag("envelope"))
-    wall_el = envelope_el.find(_tag("aboveGroundWalls"))
-    win_el = wall_el.find(_tag("windows"))
+    ag_el = envelope_el.find(_tag("aboveGroundWalls")).find(_tag("agWall"))
+    wins_el = ag_el.find(_tag("windows"))
+    assert wins_el is not None
+    win_el = wins_el.find(_tag("window"))
     assert win_el is not None
     assert win_el.find(_tag("glazingType")).text == "DOUBLE"
-    assert float(win_el.find(_tag("glazingUValue")).text) == pytest.approx(0.28, rel=1e-3)
+    assert float(win_el.find(_tag("propUvalue")).text) == pytest.approx(0.28, rel=1e-3)
 
 
 def test_write_rxl_roof():
@@ -242,7 +246,9 @@ def test_write_rxl_roof():
     result = write_rxl(env, _METADATA, 0.5)
     root = ET.fromstring(result)
     envelope_el = root.find(_tag("envelope"))
-    roof_el = envelope_el.find(_tag("roofs"))
+    roofs_el = envelope_el.find(_tag("roofs"))
+    assert roofs_el is not None
+    roof_el = roofs_el.find(_tag("roof"))
     assert roof_el is not None
     assert roof_el.find(_tag("roofType")).text == "WOOD_CATHEDRAL"
 
@@ -252,7 +258,9 @@ def test_write_rxl_floor():
     result = write_rxl(env, _METADATA, 0.5)
     root = ET.fromstring(result)
     envelope_el = root.find(_tag("envelope"))
-    floor_el = envelope_el.find(_tag("floors"))
+    floors_el = envelope_el.find(_tag("floors"))
+    assert floors_el is not None
+    floor_el = floors_el.find(_tag("floor"))
     assert floor_el is not None
     assert floor_el.find(_tag("floorType")).text == "ALL_WOOD_JOIST_TRUSS_FLOOR"
 
@@ -277,10 +285,12 @@ def test_write_rxl_below_grade_wall():
     result = write_rxl(env, _METADATA, 0.4)
     root = ET.fromstring(result)
     envelope_el = root.find(_tag("envelope"))
-    bg_el = envelope_el.find(_tag("belowGroundWalls"))
+    bgs_el = envelope_el.find(_tag("belowGroundWalls"))
+    assert bgs_el is not None
+    bg_el = bgs_el.find(_tag("bgWall"))
     assert bg_el is not None
-    assert bg_el.find(_tag("wallBelowGradeHeight")) is not None
-    assert float(bg_el.find(_tag("wallBelowGradeHeight")).text) == pytest.approx(4.0)
+    assert bg_el.find(_tag("wallHeightBelowGrade")) is not None
+    assert float(bg_el.find(_tag("wallHeightBelowGrade")).text) == pytest.approx(4.0)
 
 
 def test_write_rxl_empty_metadata():
