@@ -23,6 +23,7 @@ class WindowData:
     shgc: float
     orientation: str  # FRONT | BACK | LEFT_SIDE | RIGHT_SIDE
     height_ft: float = 0.0
+    assembly_name: str = ""
 
 
 @dataclass
@@ -44,6 +45,7 @@ class WallData:
     below_grade_height_ft: float = 0.0
     windows: list = field(default_factory=list)
     doors: list = field(default_factory=list)
+    assembly_name: str = ""
 
 
 @dataclass
@@ -261,29 +263,25 @@ def _resolve_layers(construction: dict, mat_index: dict) -> list:
 
 
 def _aperture_u_shgc(aperture: dict, constr_index: dict, mat_index: dict):
-    """Return (u_value, shgc) for a window/door aperture in imperial."""
-    # Try energy properties on aperture directly
+    """Return (u_value, shgc, assembly_name) for a window/door aperture in imperial."""
     energy = aperture.get("properties", {}).get("energy", {})
     constr_id = energy.get("construction")
     if constr_id and constr_id in constr_index:
         constr = constr_index[constr_id]
-        # Window constructions have u_factor and shgc directly
+        name = constr.get("display_name") or constr_id
         u_si = constr.get("u_factor") or constr.get("u_value") or 0.0
         shgc = constr.get("shgc", 0.0)
-        # PH window constructions store U and g_value in properties.ph.ph_glazing
         if not u_si:
             ph_glazing = constr.get("properties", {}).get("ph", {}).get("ph_glazing", {})
             u_si = ph_glazing.get("u_factor", 0.0)
             shgc = ph_glazing.get("g_value", 0.0) if not shgc else shgc
-        # Convert U from SI (W/m²K) to IP (BTU/h·ft²·°F): multiply by 0.17611
         u_ip = u_si * 0.17611
-        return u_ip, shgc
+        return u_ip, shgc, name
 
-    # Fallback: try u_factor/shgc directly on aperture properties
     u_si = energy.get("u_factor") or energy.get("u_value") or 0.0
     shgc = energy.get("shgc", 0.0)
     u_ip = u_si * 0.17611
-    return u_ip, shgc
+    return u_ip, shgc, constr_id or ""
 
 
 def _resolve_constr_id(face, face_type, is_ground, room_cset_id, cset_index):
@@ -340,8 +338,9 @@ def _opaque_assembly(
         layers = _resolve_layers(constr, mat_index)
         cavity_r, continuous_r = classify_layers(layers)
         u_val = assembly_u_value(layers)
-        return cavity_r, continuous_r, u_val
-    return 0.0, 0.0, 0.0
+        name = constr.get("display_name") or constr_id
+        return cavity_r, continuous_r, u_val, name
+    return 0.0, 0.0, 0.0, constr_id or ""
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +391,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 conditioned_area_m2 += area_m2
 
                 if is_outdoors:
-                    cavity_r, continuous_r, _ = _opaque_assembly(
+                    cavity_r, continuous_r, _, _name = _opaque_assembly(
                         face, constr_index, mat_index,
                         face_type="Floor", is_ground=False,
                         room_cset_id=room_cset_id, cset_index=cset_index,
@@ -416,7 +415,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 # else interior floor — skip
 
             elif face_type == "RoofCeiling" and is_outdoors:
-                cavity_r, continuous_r, u_val = _opaque_assembly(
+                cavity_r, continuous_r, u_val, _name = _opaque_assembly(
                     face, constr_index, mat_index,
                     face_type="RoofCeiling", is_ground=False,
                     room_cset_id=room_cset_id, cset_index=cset_index,
@@ -445,7 +444,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                 constr_id = _resolve_constr_id(
                     face, "Wall", is_ground, room_cset_id, cset_index
                 ) or "default"
-                cavity_r, continuous_r, u_val = _opaque_assembly(
+                cavity_r, continuous_r, u_val, wall_name = _opaque_assembly(
                     face, constr_index, mat_index,
                     face_type="Wall", is_ground=is_ground,
                     room_cset_id=room_cset_id, cset_index=cset_index,
@@ -458,7 +457,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     if not ap_verts:
                         ap_verts = aperture.get("geometry", {}).get("boundary", [])
                     ap_area_m2 = _polygon_area_m2(ap_verts)
-                    u_ip, shgc = _aperture_u_shgc(aperture, constr_index, mat_index)
+                    u_ip, shgc, win_name = _aperture_u_shgc(aperture, constr_index, mat_index)
                     ap_h_ft = 0.0
                     if ap_verts:
                         z_vals = [v[2] for v in ap_verts]
@@ -469,6 +468,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                         shgc=shgc,
                         orientation=orientation,
                         height_ft=ap_h_ft,
+                        assembly_name=win_name,
                     ))
 
                 doors = []
@@ -477,7 +477,7 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                     if not door_verts:
                         door_verts = door.get("geometry", {}).get("boundary", [])
                     door_area_m2 = _polygon_area_m2(door_verts)
-                    u_ip, _ = _aperture_u_shgc(door, constr_index, mat_index)
+                    u_ip, _, _door_name = _aperture_u_shgc(door, constr_index, mat_index)
                     doors.append(DoorData(
                         area_ft2=m2_to_ft2(door_area_m2),
                         u_value=u_ip,
@@ -506,11 +506,36 @@ def extract_envelope(hbjson: dict, front_door_faces: str = "S") -> EnvelopeData:
                         below_grade_height_ft=below_grade_ft,
                         windows=windows,
                         doors=doors,
+                        assembly_name=wall_name,
                     )
 
+    walls = list(_walls_by_key.values())
+    for wall in walls:
+        wall.windows = _consolidate_windows(wall.windows)
+
     return EnvelopeData(
-        walls=list(_walls_by_key.values()),
+        walls=walls,
         roofs=list(_roofs_by_constr.values()),
         floors=list(_floors_by_key.values()),
         conditioned_floor_area_ft2=m2_to_ft2(conditioned_area_m2),
     )
+
+
+def _consolidate_windows(windows: list) -> list:
+    """Merge windows with the same assembly, summing areas."""
+    grouped = {}
+    for win in windows:
+        key = win.assembly_name or (round(win.u_value, 3), round(win.shgc, 3))
+        if key in grouped:
+            grouped[key].area_ft2 += win.area_ft2
+            grouped[key].height_ft = max(grouped[key].height_ft, win.height_ft)
+        else:
+            grouped[key] = WindowData(
+                area_ft2=win.area_ft2,
+                u_value=win.u_value,
+                shgc=win.shgc,
+                orientation=win.orientation,
+                height_ft=win.height_ft,
+                assembly_name=win.assembly_name,
+            )
+    return list(grouped.values())

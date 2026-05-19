@@ -8,6 +8,29 @@ tag names that xml.etree.ElementTree cannot handle natively.
 import html
 
 
+_FRONT_BEARING = {
+    "N": 0, "NE": 45, "E": 90, "SE": 135,
+    "S": 180, "SW": 225, "W": 270, "NW": 315,
+}
+
+_REL_OFFSET = {
+    "FRONT": 0, "RIGHT_SIDE": 90, "BACK": 180, "LEFT_SIDE": 270,
+}
+
+_BEARING_TO_CARDINAL = {
+    0: "North", 45: "Northeast", 90: "East", 135: "Southeast",
+    180: "South", 225: "Southwest", 270: "West", 315: "Northwest",
+}
+
+
+def _cardinal_label(rel_orientation: str, front_door_faces: str) -> str:
+    """Convert a relative orientation + front-door direction to a cardinal label."""
+    front = _FRONT_BEARING.get(front_door_faces.upper(), 180)
+    offset = _REL_OFFSET.get(rel_orientation, 0)
+    bearing = (front + offset) % 360
+    return _BEARING_TO_CARDINAL.get(bearing, rel_orientation.replace("_", " ").title())
+
+
 def _glazing_type(u_value_ip: float) -> str:
     """Derive glazing type from U-value (BTU/h·ft²·°F)."""
     if u_value_ip <= 0.22:
@@ -30,7 +53,7 @@ def _escape(text: str) -> str:
     return html.escape(str(text))
 
 
-def _window_xml(win, list_position: int) -> str:
+def _window_xml(win, list_position: int, label: str = "Windows") -> str:
     gt = _glazing_type(win.u_value)
     return (
         "                <window>\n"
@@ -54,7 +77,7 @@ def _window_xml(win, list_position: int) -> str:
         h=win.height_ft,
         pos=list_position,
         desc=_cdata("Other"),
-        atype=_cdata("Window 1"),
+        atype=_cdata(label),
         u=win.u_value,
         orient=win.orientation,
         area=win.area_ft2,
@@ -82,12 +105,14 @@ def _door_xml(door, list_position: int) -> str:
     )
 
 
-def _windows_block(windows) -> str:
+def _windows_block(windows, cardinal: str = "") -> str:
     if not windows:
         return ""
     lines = ["                <windows>\n"]
     for i, win in enumerate(windows):
-        lines.append(_window_xml(win, i))
+        name = win.assembly_name or "Window"
+        label = "{} - {}".format(name, cardinal) if cardinal else name
+        lines.append(_window_xml(win, i, label))
     lines.append("                </windows>\n")
     return "".join(lines)
 
@@ -102,7 +127,7 @@ def _doors_block(doors) -> str:
     return "".join(lines)
 
 
-def _above_grade_wall_xml(wall, list_pos: int) -> str:
+def _above_grade_wall_xml(wall, list_pos: int, label: str = "Wall", cardinal: str = "") -> str:
     lines = [
         "        <aboveGroundWalls>\n",
         "            <agWall>\n",
@@ -110,23 +135,21 @@ def _above_grade_wall_xml(wall, list_pos: int) -> str:
         "                <otherWallType>AG_WALL_OTHER_OTHER</otherWallType>\n",
         "                <listPosition>{}</listPosition>\n".format(list_pos),
         "                <description>{}</description>\n".format(_cdata("Framed wall")),
-        "                <assemblyType>{}</assemblyType>\n".format(
-            _cdata("Wall {}".format(list_pos))
-        ),
+        "                <assemblyType>{}</assemblyType>\n".format(_cdata(label)),
         "                <propUvalue>{:.3f}</propUvalue>\n".format(wall.u_value),
         "                <cavityRvalue>{:.2f}</cavityRvalue>\n".format(wall.cavity_r),
         "                <continuousRvalue>{:.2f}</continuousRvalue>\n".format(wall.continuous_r),
         "                <relOrientation>{}</relOrientation>\n".format(wall.orientation),
         "                <grossArea>{:.2f}</grossArea>\n".format(wall.gross_area_ft2),
     ]
-    lines.append(_windows_block(wall.windows))
+    lines.append(_windows_block(wall.windows, cardinal))
     lines.append(_doors_block(wall.doors))
     lines.append("            </agWall>\n")
     lines.append("        </aboveGroundWalls>\n")
     return "".join(lines)
 
 
-def _below_grade_wall_xml(wall, list_pos: int) -> str:
+def _below_grade_wall_xml(wall, list_pos: int, label: str = "Basement Wall", cardinal: str = "") -> str:
     lines = [
         "        <belowGroundWalls>\n",
         "            <bgWall>\n",
@@ -141,15 +164,13 @@ def _below_grade_wall_xml(wall, list_pos: int) -> str:
         ),
         "                <listPosition>{}</listPosition>\n".format(list_pos),
         "                <description>{}</description>\n".format(_cdata("Wood Frame")),
-        "                <assemblyType>{}</assemblyType>\n".format(
-            _cdata("Basement Wall {}".format(list_pos))
-        ),
+        "                <assemblyType>{}</assemblyType>\n".format(_cdata(label)),
         "                <cavityRvalue>{:.2f}</cavityRvalue>\n".format(wall.cavity_r),
         "                <continuousRvalue>{:.2f}</continuousRvalue>\n".format(wall.continuous_r),
         "                <relOrientation>{}</relOrientation>\n".format(wall.orientation),
         "                <grossArea>{:.2f}</grossArea>\n".format(wall.gross_area_ft2),
     ]
-    lines.append(_windows_block(wall.windows))
+    lines.append(_windows_block(wall.windows, cardinal))
     lines.append(_doors_block(wall.doors))
     lines.append("            </bgWall>\n")
     lines.append("        </belowGroundWalls>\n")
@@ -223,6 +244,7 @@ def write_rxl(envelope, metadata: dict, infiltration_ach: float) -> str:
     owner = metadata.get("owner", {})
     location = metadata.get("location", {})
 
+    front_door_faces = building.get("front_door_faces", "S")
     project_type = building.get("project_type", "NEW_CONSTRUCTION")
     construction_type = building.get("construction_type", "SINGLE_FAMILY")
     duct_location = building.get("duct_location", "CONDITIONED_SPACE_ONLY")
@@ -255,10 +277,13 @@ def write_rxl(envelope, metadata: dict, infiltration_ach: float) -> str:
 
     wall_pos = 1
     for wall in envelope.walls:
+        cardinal = _cardinal_label(wall.orientation, front_door_faces)
+        name = wall.assembly_name or "Wall"
+        label = "{} - {}".format(name, cardinal)
         if wall.is_below_grade:
-            envelope_lines.append(_below_grade_wall_xml(wall, wall_pos))
+            envelope_lines.append(_below_grade_wall_xml(wall, wall_pos, label, cardinal))
         else:
-            envelope_lines.append(_above_grade_wall_xml(wall, wall_pos))
+            envelope_lines.append(_above_grade_wall_xml(wall, wall_pos, label, cardinal))
         wall_pos += 1
 
     for i, roof in enumerate(envelope.roofs, 1):

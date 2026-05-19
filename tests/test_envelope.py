@@ -356,7 +356,9 @@ def test_wall_consolidation_windows_accumulated():
     }
     env = extract_envelope(hbjson, "S")
     assert len(env.walls) == 1
-    assert len(env.walls[0].windows) == 2
+    # Both windows share the same construction so they consolidate into one entry
+    assert len(env.walls[0].windows) == 1
+    assert abs(env.walls[0].windows[0].area_ft2 - 21.528) < 0.1
 
 
 def test_floor_consolidation_same_assembly():
